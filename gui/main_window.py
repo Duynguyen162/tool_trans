@@ -108,6 +108,7 @@ class MainWindow(ctk.CTk):
             messagebox.showwarning("Cảnh báo", "Vui lòng chọn đầy đủ thư mục Gốc và Nơi Lưu.")
             return
         
+        self.preview_panel.release_video()
         self.app_state['process_mode'] = mode
         self.is_processing = True
         self.top_bar.set_processing_state(True)

@@ -2,6 +2,21 @@ import logging
 import sys
 import customtkinter as ctk
 from gui.main_window import MainWindow
+import logging
+
+# ==========================================
+# CẤU HÌNH LOGGING CHUYÊN NGHIỆP
+# ==========================================
+logging.basicConfig(
+    level=logging.DEBUG, # Ghi lại mọi thứ từ DEBUG, INFO, WARNING đến ERROR
+    format='%(asctime)s | %(levelname)-8s | [%(filename)s:%(lineno)d] | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler("app_debug.log", encoding="utf-8", mode="w"), # Ghi đè file log mỗi lần mở app
+        logging.StreamHandler() # Vẫn in ra màn hình Terminal
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def setup_logging():
     log_format = "%(asctime)s - %(levelname)s - %(message)s"

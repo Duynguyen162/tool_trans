@@ -81,7 +81,14 @@ class PreviewPanel(ctk.CTkFrame):
                 
             self.show_frame_at_time(0)
             self.slider.set(0)
-
+    def release_video(self):
+        """Giải phóng file video khỏi bộ nhớ để Windows cho phép xóa"""
+        self.is_playing = False
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        self.canvas.delete("all")
+        
     def toggle_play(self):
         if not self.cap: return
         self.is_playing = not self.is_playing

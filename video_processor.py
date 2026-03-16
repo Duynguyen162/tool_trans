@@ -3,6 +3,7 @@ import os
 import logging
 import cv2
 import re
+import multiprocessing
 from utils import format_ffmpeg_path
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,6 @@ class VideoProcessor:
         margin_v = orig_h - (y + h)
         font_size = max(12, int(h / 2.5)) 
 
-        # Đổi màu tiếng Việt sang mã ASS
         color_map = {
             "Trắng": "&H00FFFFFF",
             "Vàng": "&H0000FFFF",
@@ -47,7 +47,6 @@ class VideoProcessor:
         }
         primary_color = color_map.get(sub_color, "&H00FFFFFF")
 
-        # Đổi viền sang Pixel
         outline_map = {"Mỏng": "1", "Vừa": "2", "Dày": "4"}
         outline_val = outline_map.get(sub_outline, "2")
 
@@ -59,8 +58,7 @@ WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,{font_size},{primary_color},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_val},0,2,{margin_l},{margin_r},{margin_v},1
-
+Style: Default,Arial,{font_size},{primary_color},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_val},0,8,{margin_l},{margin_r},{margin_v},1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"""
 
@@ -103,15 +101,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
             in_stream = "[0:v]"
 
         ass_file = None
-        # Chỉ tạo filter chèn Subtitle nếu người dùng BẬT tính năng này
+        temp_ass_file = "temp_sub.ass" # MẸO: Đổi tên file tạm thành tiếng Anh không dấu để chống lỗi FFmpeg
+
         if enable_subtitles and os.path.exists(srt_file):
             ass_file = srt_file.replace('.srt', '.ass')
             self.create_ass_file(srt_file, ass_file, orig_w, orig_h, roi_new, sub_color, sub_outline)
-            ass_escaped = format_ffmpeg_path(ass_file)
+            
+            # Copy nội dung sang file tạm không dấu
+            import shutil
+            shutil.copy2(ass_file, temp_ass_file)
+
+            ass_escaped = format_ffmpeg_path(temp_ass_file)
             sub_filter = f"{in_stream}subtitles='{ass_escaped}'[v_out]"
             filters.append(sub_filter)
         else:
-            filters.append(f"{in_stream}copy[v_out]") # Nếu không sub, copy luồng cũ sang v_out
+            filters.append(f"{in_stream}copy[v_out]")
 
         cmd = ["ffmpeg", "-y", "-i", input_video]
         
@@ -136,26 +140,61 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         if audio_map_flag: cmd.extend(["-map", audio_map_flag, "-c:a", "aac"])
         else: cmd.append("-an")
         
-        cmd.extend(["-c:v", "libx264", output_video])
+        # =========================================================
+        total_cores = multiprocessing.cpu_count()
+        safe_threads = max(2, total_cores - 2) 
+        cmd.extend(["-threads", str(safe_threads)])
+        
+        ENCODER = "h264_nvenc" # Đang test NVIDIA
+        cmd.extend(["-c:v", ENCODER])
 
-        logger.debug(f"Chạy FFmpeg tổng hợp: {' '.join(cmd)}")
+        if ENCODER == "libx264":
+            cmd.extend(["-preset", "veryfast"]) 
+        elif ENCODER == "h264_nvenc":
+            cmd.extend(["-preset", "fast"]) # ĐÃ SỬA: Đổi p4 thành fast cho an toàn tuyệt đối
+        
+        cmd.append(output_video)
+        # =========================================================
+
+        logger.debug(f"Chạy FFmpeg: {' '.join(cmd)}")
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         try:
             self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creationflags)
-            self.process.communicate()
+            
+            # ĐÃ SỬA: Bắt buộc lấy log lỗi của FFmpeg để xem
+            out, err = self.process.communicate()
+
+            # Nếu FFmpeg sập (returncode khác 0), in lỗi ra file log ngay lập tức!
+            if self.process.returncode != 0:
+                error_msg = err.decode('utf-8', errors='ignore')
+                logger.error(f"❌ FFMPEG BỊ CRASH! Nguyên nhân từ hệ thống:\n{error_msg}")
+                if os.path.exists(output_video): os.remove(output_video)
+                # Dọn dẹp file tạm
+                if os.path.exists(temp_ass_file): os.remove(temp_ass_file)
+                return False
 
             if self.is_cancelled:
                 if os.path.exists(output_video): os.remove(output_video)
                 return False
 
-            if delete_original and os.path.exists(input_video): os.remove(input_video)
+            if delete_original and os.path.exists(input_video):
+                import time
+                for _ in range(3): # Thử xóa 3 lần
+                    try:
+                        os.remove(input_video)
+                        logger.info(f"Đã xóa video gốc: {input_video}")
+                        break
+                    except PermissionError:
+                        time.sleep(1) # Nghỉ 1 giây để OS nhả file rồi thử lại
             
             if ass_file and os.path.exists(ass_file): os.remove(ass_file)
+            if os.path.exists(temp_ass_file): os.remove(temp_ass_file) # Dọn file tạm
+            
             return True
 
         except Exception as e:
-            logger.exception(f"Exception FFmpeg: {e}")
+            logger.exception(f"Exception chạy FFmpeg: {e}")
             raise
 
     def cancel(self):
