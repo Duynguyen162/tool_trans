@@ -1,6 +1,7 @@
 import os
 import logging
 import subprocess
+import time
 from gtts import gTTS
 
 logger = logging.getLogger(__name__)
@@ -14,8 +15,10 @@ def get_audio_duration(file_path):
     except:
         return 0.0
 
-def create_dubbed_audio(segments_data, original_video_path, output_audio_path, target_lang='vi'):
-    logger.info(f"Đang tạo track lồng tiếng ({target_lang})...")
+# Lưu ý: Biến 'voice' vẫn được giữ ở đây để không làm lỗi file main_window.py, 
+# nhưng hệ thống sẽ luôn dùng gTTS (Giọng Google)
+def create_dubbed_audio(segments_data, original_video_path, output_audio_path, target_lang='vi', voice="ignored"):
+    logger.info(f"Đang tạo track lồng tiếng ({target_lang}) bằng giọng 'Chị Google' (gTTS)...")
     temp_files = []
     try:
         inputs = []
@@ -31,13 +34,19 @@ def create_dubbed_audio(segments_data, original_video_path, output_audio_path, t
             if not text.strip(): continue
             
             temp_tts = f"temp_tts_{i}.mp3"
+            
             try:
+                # Gọi chị Google đọc văn bản
                 tts = gTTS(text, lang=target_lang)
                 tts.save(temp_tts)
-                temp_files.append(temp_tts)
                 
+                # Nghỉ 0.1 giây cho máy tính kịp ghi file ra ổ cứng
+                time.sleep(0.1)
+                
+                temp_files.append(temp_tts)
                 inputs.extend(["-i", temp_tts])
                 
+                # ĐOẠN FFMPEG ÉP TỐC ĐỘ (CĂN CHUẨN KHỚP HÌNH)
                 tts_duration = get_audio_duration(temp_tts)
                 speed_ratio = 1.0
                 
@@ -60,7 +69,6 @@ def create_dubbed_audio(segments_data, original_video_path, output_audio_path, t
         if num_inputs == 1:
             filter_complex.append(f"{mix_inputs}anull[aout]")
         else:
-            # QUAN TRỌNG: Thêm normalize=0 để âm lượng không bị chia nhỏ khi trộn nhiều file!
             filter_complex.append(f"{mix_inputs}amix=inputs={num_inputs}:duration=longest:dropout_transition=0:normalize=0[aout]")
         
         cmd = ["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filter_complex), "-map", "[aout]", output_audio_path]
@@ -71,7 +79,7 @@ def create_dubbed_audio(segments_data, original_video_path, output_audio_path, t
         return process.returncode == 0
         
     except Exception as e:
-        logger.error(f"Lỗi tạo lồng tiếng: {e}")
+        logger.error(f"Lỗi tổng quá trình tạo lồng tiếng: {e}")
         return False
     finally:
         for f in temp_files:

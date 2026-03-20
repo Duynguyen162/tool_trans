@@ -43,6 +43,10 @@ class LeftPanel(ctk.CTkFrame):
         # --- Âm Thanh ---
         ctk.CTkLabel(scroll, text="Tùy Chỉnh Âm Thanh", font=("Segoe UI", 14, "bold"), text_color="#3B82F6").pack(anchor="w", pady=(10, 5))
         ctk.CTkCheckBox(scroll, text="Tạo lồng tiếng AI tự động", variable=self.app_state['enable_dubbing']).pack(anchor="w", pady=5)
+        
+        # --- CODE THÊM MỚI: TẠO MENU CHỌN GIỌNG ---
+        ctk.CTkLabel(scroll, text="Giọng lồng tiếng:").pack(anchor="w", pady=(5,0))
+        ctk.CTkOptionMenu(scroll, variable=self.app_state['voice_selection'], values=["Nữ (Hoài My)", "Nam (Nam Minh)"]).pack(fill="x", pady=(0, 10))
         ctk.CTkCheckBox(scroll, text="Tắt toàn bộ âm thanh video gốc", variable=self.app_state['mute_original']).pack(anchor="w", pady=5)
         ctk.CTkLabel(scroll, text="Tăng/Giảm âm lượng lồng tiếng:").pack(anchor="w", pady=(5,0))
         ctk.CTkSlider(scroll, from_=0.5, to=5.0, variable=self.app_state['dub_volume']).pack(fill="x", pady=(0, 15))

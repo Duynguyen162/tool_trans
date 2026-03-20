@@ -35,9 +35,14 @@ class VideoProcessor:
         if w == 0 or h == 0: 
             x, y, w, h = int(orig_w * 0.1), int(orig_h * 0.8), int(orig_w * 0.8), int(orig_h * 0.1)
 
-        margin_l = x
-        margin_r = orig_w - (x + w)
-        margin_v = orig_h - (y + h)
+        # TẠO KHOẢNG ĐỆM (PADDING) GIÚP CHỮ KHÔNG BỊ CHẠM VIỀN
+        padding_v = max(5, int(h * 0.1))   # Thụt xuống 10% so với mép trên của khung
+        padding_h = max(10, int(w * 0.05)) # Thụt vào 5% so với 2 mép cạnh bên
+
+        margin_l = x + padding_h
+        margin_r = (orig_w - (x + w)) + padding_h
+        margin_v = y + padding_v 
+        
         font_size = max(12, int(h / 2.5)) 
 
         color_map = {
@@ -65,6 +70,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         with open(srt_path, 'r', encoding='utf-8') as f:
             content = f.read().strip()
             
+        import re
         blocks = re.split(r'\n\n+', content)
         for block in blocks:
             lines = block.split('\n')
@@ -94,7 +100,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         filters = []
         x_old, y_old, w_old, h_old = roi_old
         if w_old > 0 and h_old > 0:
-            blur_filter = f"[0:v]crop={w_old}:{h_old}:{x_old}:{y_old},boxblur=20:5[b];[0:v][b]overlay={x_old}:{y_old}[v_blur]"
+            # TỰ ĐỘNG TÍNH TOÁN ĐỘ MỜ AN TOÀN TRÁNH CRASH FFMPEG
+            safe_radius = int(min(w_old, h_old) / 4)
+            safe_radius = max(1, min(20, safe_radius)) # Giữ trong khoảng an toàn từ 1 đến 20
+            
+            blur_filter = f"[0:v]crop={w_old}:{h_old}:{x_old}:{y_old},boxblur={safe_radius}:5[b];[0:v][b]overlay={x_old}:{y_old}[v_blur]"
             filters.append(blur_filter)
             in_stream = "[v_blur]"
         else:

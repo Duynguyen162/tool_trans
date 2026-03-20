@@ -41,3 +41,7 @@ if __name__ == "__main__":
     
     app = MainWindow()
     app.mainloop()
+
+
+
+    #python -m PyInstaller --noconsole --collect-all customtkinter --collect-all whisper --hidden-import=whisper --hidden-import=edge_tts --hidden-import=socket --hidden-import=_socket --name "AI_Video_Translator" main.py

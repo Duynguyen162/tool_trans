@@ -17,6 +17,10 @@ class PreviewPanel(ctk.CTkFrame):
         self.roi_old = (0, 0, 0, 0)
         self.roi_new = (0, 0, 0, 0)
         
+        # --- ĐÃ SỬA: BIẾN LƯU TỌA ĐỘ CỐ ĐỊNH TRÊN MÀN HÌNH ---
+        self.canvas_roi_old = (0, 0, 0, 0) 
+        self.canvas_roi_new = (0, 0, 0, 0) 
+        
         self.start_x = self.start_y = 0
         self.current_rect = None
 
@@ -61,7 +65,6 @@ class PreviewPanel(ctk.CTkFrame):
         duration = frame_count / fps if fps else 0
         mins, secs = int(duration // 60), int(duration % 60)
         
-        # CẮT NGẮN TÊN VIDEO NẾU QUÁ DÀI (Giữ cho nút Play không bị văng)
         display_name = filename if len(filename) <= 45 else filename[:25] + "..." + filename[-15:]
         
         self.lbl_info.configure(text=f"Video: {display_name}  |  Thời lượng: {mins:02d}:{secs:02d}")
@@ -81,8 +84,8 @@ class PreviewPanel(ctk.CTkFrame):
                 
             self.show_frame_at_time(0)
             self.slider.set(0)
+
     def release_video(self):
-        """Giải phóng file video khỏi bộ nhớ để Windows cho phép xóa"""
         self.is_playing = False
         if self.cap:
             self.cap.release()
@@ -152,13 +155,13 @@ class PreviewPanel(ctk.CTkFrame):
         x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
         x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
         
-        adj_x1, adj_y1 = max(0, x1 - self.offset_x), max(0, y1 - self.offset_y)
-        adj_x2, adj_y2 = min(self.canvas_w - self.offset_x, x2 - self.offset_x), min(self.canvas_h - self.offset_y, y2 - self.offset_y)
-        real_x, real_y = int(adj_x1 / self.scale), int(adj_y1 / self.scale)
-        real_w, real_h = int((adj_x2 - adj_x1) / self.scale), int((adj_y2 - adj_y1) / self.scale)
+        # ĐÃ SỬA: LƯU TỌA ĐỘ MÀN HÌNH (CANVAS)
+        cx, cy, cw, ch = x1, y1, x2-x1, y2-y1
         
-        if self.mode == 'blur': self.roi_old = (real_x, real_y, real_w, real_h)
-        elif self.mode == 'text': self.roi_new = (real_x, real_y, real_w, real_h)
+        if self.mode == 'blur': 
+            self.canvas_roi_old = (cx, cy, cw, ch)
+        elif self.mode == 'text': 
+            self.canvas_roi_new = (cx, cy, cw, ch)
             
         self.canvas.delete(self.current_rect)
         self.current_rect = None
@@ -166,19 +169,18 @@ class PreviewPanel(ctk.CTkFrame):
         self.btn_old.configure(fg_color="#EF4444")
         self.btn_new.configure(fg_color="#10B981")
         self.show_frame_at_time(self.slider.get())
-        self.callbacks['update_regions'](self.roi_old, self.roi_new)
+        
+        # TRUYỀN TỌA ĐỘ MÀN HÌNH (CANVAS) VỀ MAIN ĐỂ LƯU
+        self.callbacks['update_regions'](self.canvas_roi_old, self.canvas_roi_new)
 
     def redraw_regions(self):
-        if self.roi_old[2] > 0:
-            rx, ry, rw, rh = self.roi_old
-            x1, y1 = rx * self.scale + self.offset_x, ry * self.scale + self.offset_y
-            x2, y2 = (rx + rw) * self.scale + self.offset_x, (ry + rh) * self.scale + self.offset_y
-            self.canvas.create_rectangle(x1, y1, x2, y2, outline="#EF4444", width=3)
-            self.canvas.create_text(x1, y1-10, text="VÙNG XÓA CHỮ", fill="#EF4444", anchor="w", font=("Segoe UI", 10, "bold"))
+        # VẼ DỰA TRÊN TỌA ĐỘ MÀN HÌNH CỐ ĐỊNH, KHÔNG BỊ TỤT LỆCH DÙ VIDEO CÓ ĐỔI SIZE
+        if self.canvas_roi_old[2] > 0:
+            cx, cy, cw, ch = self.canvas_roi_old
+            self.canvas.create_rectangle(cx, cy, cx+cw, cy+ch, outline="#EF4444", width=3)
+            self.canvas.create_text(cx, cy-10, text="VÙNG XÓA CHỮ", fill="#EF4444", anchor="w", font=("Segoe UI", 10, "bold"))
             
-        if self.roi_new[2] > 0:
-            rx, ry, rw, rh = self.roi_new
-            x1, y1 = rx * self.scale + self.offset_x, ry * self.scale + self.offset_y
-            x2, y2 = (rx + rw) * self.scale + self.offset_x, (ry + rh) * self.scale + self.offset_y
-            self.canvas.create_rectangle(x1, y1, x2, y2, outline="#10B981", width=3)
-            self.canvas.create_text(x1, y1-10, text="VÙNG HIỂN THỊ PHỤ ĐỀ (AUTO SIZE)", fill="#10B981", anchor="w", font=("Segoe UI", 10, "bold"))
+        if self.canvas_roi_new[2] > 0:
+            cx, cy, cw, ch = self.canvas_roi_new
+            self.canvas.create_rectangle(cx, cy, cx+cw, cy+ch, outline="#10B981", width=3)
+            self.canvas.create_text(cx, cy-10, text="VÙNG HIỂN THỊ PHỤ ĐỀ", fill="#10B981", anchor="w", font=("Segoe UI", 10, "bold"))

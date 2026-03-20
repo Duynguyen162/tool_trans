@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from google import genai
 from deep_translator import GoogleTranslator
@@ -33,7 +34,7 @@ def init_client():
 init_client()
 
 # ==========================================
-# HÀM DỊCH THEO MẺ (GẮN ID MAPPING)
+# HÀM DỊCH THEO MẺ (ĐÃ TÍCH HỢP CHIA CHUNK VÀ FULL PROMPT)
 # ==========================================
 def translate_batch(text_list, source_lang='zh-CN', target_lang='vi'):
     global current_key_index, client
@@ -43,64 +44,233 @@ def translate_batch(text_list, source_lang='zh-CN', target_lang='vi'):
     lang_map = {"vi": "Vietnamese", "en": "English", "ko": "Korean", "ja": "Japanese", "zh-CN": "Chinese"}
     target = lang_map.get(target_lang, "Vietnamese")
     
-    # 1. Tạo chuỗi gửi đi có đánh số thứ tự (ID)
-    input_data = ""
-    for i, text in enumerate(text_list):
-        input_data += f"{i}|{text}\n"
+    final_result_list = []
+    
+    # -------------------------------------------------------------
+    # SỰ LỰA CHỌN VÀNG: 60 câu ~ 3 phút phim (Đủ ngữ cảnh, không bị cắt cụt)
+    batch_size = 60  
+    # -------------------------------------------------------------
 
-    prompt = f"""
-You are a professional subtitle translator. Translate the following {source_lang} texts to {target}.
-CRITICAL RULES:
-1. Maintain the EXACT format with the ID and the pipe symbol '|'.
-2. Do not add any markdown, intro, or outro.
-3. ANTI-HALLUCINATION: If a text contains unnatural looping words (e.g. a word repeating 4-5 times endlessly due to AI speech-to-text errors), CLEAN IT UP. Translate it naturally as if a human spoke it (maximum 1 or 2 repetitions for emphasis).
+    # Băm nhỏ mảng lớn thành nhiều mảng nhỏ
+    for batch_start in range(0, len(text_list), batch_size):
+        chunk = text_list[batch_start:batch_start + batch_size]
+        
+        # 1. Tạo chuỗi gửi đi cho mẻ hiện tại
+        input_data = ""
+        for i, text in enumerate(chunk):
+            # Tính chỉ số ID thật của video để AI không bị loạn
+            real_index = batch_start + i
+            input_data += f"{real_index}|{text}\n"
 
-Input:
-{input_data}
-"""
+        # GẮN FULL SIÊU PROMPT CỦA BẠN VÀO ĐÂY
+        prompt = f"""You are an elite subtitle translator and localization expert.
 
-    # 2. Vòng lặp chống lỗi API & Xoay vòng Key
-    while client is not None and current_key_index < len(API_KEYS):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
-            )
-            if response.text:
-                res_text = response.text.strip()
-                
-                # 3. Bóc tách kết quả dựa trên mã ID
-                translated_dict = {}
-                for line in res_text.split('\n'):
-                    line = line.strip()
-                    if '|' in line:
-                        parts = line.split('|', 1)
-                        if parts[0].strip().isdigit():
-                            translated_dict[int(parts[0].strip())] = parts[1].strip()
-                
-                # 4. Ráp lại thành mảng theo đúng thứ tự mốc thời gian video
-                result_list = []
-                for i in range(len(text_list)):
-                    # Lấy câu đã dịch, nếu AI lỡ bỏ sót dòng nào thì lấy lại câu gốc tiếng Trung
-                    result_list.append(translated_dict.get(i, text_list[i])) 
-                
-                return result_list
-                
-        except Exception as e:
-            logger.warning(f"Key thứ {current_key_index + 1} hết Quota hoặc lỗi: {e}")
-            current_key_index += 1
-            if current_key_index < len(API_KEYS):
-                logger.info(f"Đang tự động đổi sang API Key thứ {current_key_index + 1}...")
-                init_client()
-            else:
-                logger.warning("Hết sạch API Key. Lùi về Google Translate.")
-                client = None
+Your task is to translate dialogue subtitles from {source_lang} to {target}.
 
-    # Fallback: Google Translate dự phòng
-    logger.info("Đang dịch bằng Google Translate (Từng câu)...")
-    try:
-        translator = GoogleTranslator(source=source_lang, target=target_lang)
-        return [translator.translate(t) for t in text_list]
-    except Exception as e:
-        logger.error(f"Lỗi Google Translate: {e}")
-        return text_list
+The subtitles come from speech recognition (STT), so they may contain noise,
+repetitions, or fragmented sentences.
+
+Follow the rules below carefully.
+
+--------------------------------
+CONTEXT UNDERSTANDING
+--------------------------------
+
+Before translating, read the entire batch of subtitles to infer:
+
+- the storyline
+- the relationship between speakers
+- emotional tone
+- whether the speech is casual, formal, angry, joking, etc.
+
+Use this context to produce natural translations.
+
+Do NOT translate each line independently without considering context.
+
+--------------------------------
+RELATIONSHIP-AWARE LANGUAGE
+--------------------------------
+
+Adapt the translation style to the cultural norms of the target language.
+
+Examples:
+
+Vietnamese:
+choose natural pronouns depending on relationship
+(anh/em, tao/mày, cậu/tớ, chú/cháu, con/mẹ...)
+
+Japanese:
+use appropriate politeness level (casual / polite / honorific)
+
+Korean:
+adapt speech level and honorific usage
+
+Chinese:
+use natural conversational tone
+
+English:
+use natural spoken English
+
+Avoid robotic or overly formal language unless the context requires it.
+
+--------------------------------
+NATURAL SPOKEN LANGUAGE
+--------------------------------
+
+The output must sound like real spoken dialogue.
+
+Prefer conversational phrasing.
+
+Use natural particles, slang, or contractions when appropriate.
+
+Avoid literal word-for-word translation.
+
+--------------------------------
+SUBTITLE STYLE
+--------------------------------
+
+Subtitles must be easy to read.
+
+Prefer shorter spoken sentences.
+
+Avoid unnecessary filler words.
+
+The translation should feel natural when read aloud or used for dubbing.
+
+--------------------------------
+ANTI-STT NOISE CLEANING
+--------------------------------
+
+Speech recognition may produce errors such as:
+
+hello hello hello hello
+wait wait wait wait
+
+Clean up unnatural repetition.
+
+Allow a maximum of 1–2 repetitions if it expresses emotion.
+
+--------------------------------
+SEGMENT PRESERVATION
+--------------------------------
+
+Each input line must produce exactly ONE output line.
+
+Do NOT merge lines.
+Do NOT split lines.
+
+--------------------------------
+PROPER NAMES
+--------------------------------
+
+Do NOT translate names of people, places, or brands unless a widely accepted translation exists.
+
+Examples:
+
+John → John  
+New York → New York  
+YouTube → YouTube  
+
+--------------------------------
+SOUND EFFECTS
+--------------------------------
+
+If the subtitle contains sound tags such as:
+
+[LAUGHING]
+[DOOR SLAMS]
+[MUSIC]
+
+Keep them unchanged.
+
+--------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------
+
+Return ONLY the translated subtitles.
+
+Keep the exact format:
+
+ID|translated text
+
+CRITICAL:
+- Do NOT add explanations, markdown, or extra text.
+- Do NOT change the ID numbers.
+- Do NOT use the pipe symbol "|" inside the translated text itself.
+- If a source line is empty or contains only punctuation, return the ID with an empty string (e.g., 2|).
+
+--------------------------------
+INPUT
+--------------------------------
+
+{input_data}"""
+
+        chunk_success = False
+
+        # --- THUẬT TOÁN BẢO VỆ API KEY THÔNG MINH ---
+        # Cho phép thử lại tối đa (Số key * 2) lần. Ví dụ bạn có 2 key, nó sẽ thử 4 lần (chờ tổng cộng 40s) rồi mới bỏ cuộc.
+        max_attempts = max(1, len(API_KEYS) * 2) 
+
+        for attempt in range(max_attempts):
+            if client is None:
+                break
+                
+            try:
+                logger.info(f"Đang dịch từ câu {batch_start} đến {batch_start + len(chunk)} (Bằng Key {current_key_index + 1})...")
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt
+                )
+                
+                if response.text:
+                    res_text = response.text.strip()
+                    translated_dict = {}
+                    for line in res_text.split('\n'):
+                        line = line.strip()
+                        if '|' in line:
+                            parts = line.split('|', 1)
+                            if parts[0].strip().isdigit():
+                                translated_dict[int(parts[0].strip())] = parts[1].strip()
+                    
+                    for i in range(len(chunk)):
+                        real_index = batch_start + i
+                        final_result_list.append(translated_dict.get(real_index, chunk[i])) 
+                    
+                    chunk_success = True
+                    
+                    # GIỮ NHỊP ĐỘ: Nghỉ 4 giây sau mỗi lần dịch thành công (Khoảng 15 mẻ/phút = Chuẩn Limit Google)
+                    time.sleep(4)
+                    break # Dịch thành công thì thoát vòng lặp retry để làm mẻ tiếp theo
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # NẾU BỊ QUÁ TẢI (429) -> CHỜ VÀ XOAY VÒNG KEY CHỨ KHÔNG XÓA KEY
+                if "429" in error_msg or "quota" in error_msg or "too many" in error_msg or "exhausted" in error_msg:
+                    logger.warning(f"⚠️ Key {current_key_index + 1} bị quá tải/Limit. Đang chờ 10s để server nhả IP...")
+                    time.sleep(10) # Bắt buộc chờ 10s để Google reset Limit
+                    
+                    # Phép toán '%' giúp xoay vòng tròn: Key 1 -> Key 2 -> Key 3 -> Quay lại Key 1
+                    if len(API_KEYS) > 1:
+                        current_key_index = (current_key_index + 1) % len(API_KEYS)
+                        logger.info(f"🔄 Tạm xoay vòng sang Key {current_key_index + 1} để san sẻ tải...")
+                        init_client()
+                else:
+                    logger.error(f"❌ Lỗi Gemini không xác định: {e}")
+                    time.sleep(3)
+                    if len(API_KEYS) > 1:
+                        current_key_index = (current_key_index + 1) % len(API_KEYS)
+                        init_client()
+
+        # Fallback: Chỉ khi nào thử đi thử lại chán chê mà server vẫn sập, mới phải lôi Google Translate ra xài
+        if not chunk_success:
+            logger.info("Đang dịch mẻ này bằng Google Translate...")
+            try:
+                translator = GoogleTranslator(source=source_lang, target=target_lang)
+                for t in chunk:
+                    final_result_list.append(translator.translate(t))
+            except Exception as e:
+                logger.error(f"Lỗi Google Translate: {e}")
+                final_result_list.extend(chunk)
+
+    return final_result_list
