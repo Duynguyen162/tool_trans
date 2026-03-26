@@ -61,148 +61,93 @@ def translate_batch(text_list, source_lang='zh-CN', target_lang='vi'):
             # Tính chỉ số ID thật của video để AI không bị loạn
             real_index = batch_start + i
             input_data += f"{real_index}|{text}\n"
+        # ======================================================
+        # TÍNH NĂNG MỚI: ĐỌC NGỮ CẢNH TỪ FILE BÊN NGOÀI (MINI-RAG)
+        # ======================================================
+        extra_context = ""
+        context_file = "ngu_canh.txt"
+        if os.path.exists(context_file):
+            try:
+                with open(context_file, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        extra_context = f"""
+--------------------------------
+[SPECIAL CONTEXT FOR THIS VIDEO]
+--------------------------------
+{content}
+"""
+            except Exception as e:
+                logger.warning(f"Không thể đọc file ngữ cảnh: {e}")
+        # ======================================================
 
+        
         # GẮN FULL SIÊU PROMPT CỦA BẠN VÀO ĐÂY
+        # Gắn Context nếu có file ngu_canh.txt (Từ bước trước)
+        extra_context_str = f"\n--------------------------------\n[SPECIAL CONTEXT FOR THIS VIDEO]\n--------------------------------\n{extra_context}\n" if extra_context else ""
+
         prompt = f"""You are an elite subtitle translator and localization expert.
 
 Your task is to translate dialogue subtitles from {source_lang} to {target}.
-
-The subtitles come from speech recognition (STT), so they may contain noise,
-repetitions, or fragmented sentences.
-
+The subtitles come from speech recognition (STT), so they may contain noise, repetitions, or fragmented sentences.
+{extra_context_str}
 Follow the rules below carefully.
 
 --------------------------------
-CONTEXT UNDERSTANDING
+CONTEXT & TONE INFERENCE
 --------------------------------
-
-Before translating, read the entire batch of subtitles to infer:
-
-- the storyline
-- the relationship between speakers
-- emotional tone
-- whether the speech is casual, formal, angry, joking, etc.
-
-Use this context to produce natural translations.
-
-Do NOT translate each line independently without considering context.
+Before translating, read the entire batch to infer:
+- The storyline and setting.
+- The relationship, power dynamic, and intimacy between speakers.
+- The emotional tone (casual, formal, angry, joking, sarcastic, etc.).
+Do NOT translate line-by-line in a vacuum. Use this context to weave a coherent dialogue.
 
 --------------------------------
-RELATIONSHIP-AWARE LANGUAGE
+UNIVERSAL LOCALIZATION RULES (TARGET: {target})
 --------------------------------
-
-Adapt the translation style to the cultural norms of the target language.
-
-Examples:
-
-Vietnamese:
-choose natural pronouns depending on relationship
-(anh/em, tao/mày, cậu/tớ, chú/cháu, con/mẹ...)
-
-Japanese:
-use appropriate politeness level (casual / polite / honorific)
-
-Korean:
-adapt speech level and honorific usage
-
-Chinese:
-use natural conversational tone
-
-English:
-use natural spoken English
-
-Avoid robotic or overly formal language unless the context requires it.
+You must act as a native speaker and cultural expert of {target}.
+1. Register & Politeness: Dynamically adjust the formality, honorifics, and politeness levels based on the speakers' inferred relationships, exactly as a native {target} speaker would.
+2. Pronouns & Titles: Choose the most natural subjective/objective pronouns and addressing terms specific to {target} culture.
+3. Gender & Grammar Agreement: Ensure correct grammatical gender, subject-verb agreement, and syntax rules native to {target}.
+4. Idioms & Transcreation: Do NOT translate idioms, jokes, or cultural references literally. Replace them with equivalent natural expressions in {target} that evoke the same emotion and meaning.
 
 --------------------------------
-NATURAL SPOKEN LANGUAGE
+NATURAL SPOKEN SUBTITLE FORMAT
 --------------------------------
-
-The output must sound like real spoken dialogue.
-
-Prefer conversational phrasing.
-
-Use natural particles, slang, or contractions when appropriate.
-
-Avoid literal word-for-word translation.
-
---------------------------------
-SUBTITLE STYLE
---------------------------------
-
-Subtitles must be easy to read.
-
-Prefer shorter spoken sentences.
-
-Avoid unnecessary filler words.
-
-The translation should feel natural when read aloud or used for dubbing.
+- The output must flow like real, everyday spoken dialogue, not a textbook.
+- Use natural conversational fillers, contractions, or colloquialisms appropriate for the tone.
+- Subtitles must be concise. Favor shorter, impactful phrasing over wordy literal translations to ensure readability on screen.
 
 --------------------------------
 ANTI-STT NOISE CLEANING
 --------------------------------
-
-Speech recognition may produce errors such as:
-
-hello hello hello hello
-wait wait wait wait
-
-Clean up unnatural repetition.
-
-Allow a maximum of 1–2 repetitions if it expresses emotion.
+- Clean up unnatural STT repetitions (e.g., "hello hello hello", "wait wait wait").
+- Allow a maximum of 1-2 repetitions ONLY if it naturally expresses emotion (e.g., panic, excitement).
+- Fix fragmented sentences caused by STT pauses.
 
 --------------------------------
 SEGMENT PRESERVATION
 --------------------------------
-
-Each input line must produce exactly ONE output line.
-
-Do NOT merge lines.
-Do NOT split lines.
-
---------------------------------
-PROPER NAMES
---------------------------------
-
-Do NOT translate names of people, places, or brands unless a widely accepted translation exists.
-
-Examples:
-
-John → John  
-New York → New York  
-YouTube → YouTube  
-
---------------------------------
-SOUND EFFECTS
---------------------------------
-
-If the subtitle contains sound tags such as:
-
-[LAUGHING]
-[DOOR SLAMS]
-[MUSIC]
-
-Keep them unchanged.
+- Each input line (ID) MUST produce exactly ONE output line.
+- Do NOT merge lines. Do NOT split lines.
+- Do NOT translate proper names (people, places, brands) unless a widely accepted localization exists in {target}.
+- Keep sound tags completely unchanged (e.g., [LAUGHING], [DOOR SLAMS]).
 
 --------------------------------
 OUTPUT FORMAT (STRICT)
 --------------------------------
-
-Return ONLY the translated subtitles.
-
+Return ONLY the translated subtitles. No conversational filler. No markdown blocks. No explanations.
 Keep the exact format:
-
 ID|translated text
 
-CRITICAL:
-- Do NOT add explanations, markdown, or extra text.
-- Do NOT change the ID numbers.
+CRITICAL CONSTRAINTS:
+- Do NOT change or reorder the ID numbers.
 - Do NOT use the pipe symbol "|" inside the translated text itself.
-- If a source line is empty or contains only punctuation, return the ID with an empty string (e.g., 2|).
+- If a source line is empty or contains only punctuation/unintelligible noise, return the ID with an empty string (e.g., 2|).
 
 --------------------------------
 INPUT
 --------------------------------
-
 {input_data}"""
 
         chunk_success = False
